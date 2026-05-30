@@ -1,0 +1,34 @@
+[httpd_hosts]
+host1 ansible_host=host1.example.com
+
+[rabbitmq_hosts]
+host2 ansible_host=host2.example.com
+
+[postgresql_hosts]
+host3 ansible_host=host3.example.com
+
+[monitoring:children]
+httpd_hosts
+rabbitmq_hosts
+postgresql_hosts
+
+[monitoring:vars]
+ansible_user=ansible
+healthcheck_api_url=http://localhost:5000/healthcheck
+alert_email=ops-team@example.com
+disk_usage_threshold=80
+
+[httpd_hosts:vars]
+service_name=httpd
+service_package=httpd
+systemd_unit=httpd
+
+[rabbitmq_hosts:vars]
+service_name=rabbitMQ
+service_package=rabbitmq-server
+systemd_unit=rabbitmq-server
+
+[postgresql_hosts:vars]
+service_name=postgreSQL
+service_package=postgresql-server
+systemd_unit=postgresql

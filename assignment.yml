@@ -1,0 +1,118 @@
+---
+- name: rbcapp1 assignment
+  hosts: monitoring
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: require action variable
+      fail:
+        msg: "pass -e action=verify_install|check-disk|check-status"
+      when: action is not defined
+
+    - name: check if package is installed
+      command: rpm -q {{ service_package }}
+      register: pkg
+      changed_when: false
+      failed_when: false
+      when: action == 'verify_install'
+
+    - name: install httpd on host1 if missing
+      dnf:
+        name: "{{ service_package }}"
+        state: present
+      when:
+        - action == 'verify_install'
+        - inventory_hostname in groups['httpd_hosts']
+        - pkg.rc != 0
+
+    - name: start httpd after install
+      systemd:
+        name: "{{ systemd_unit }}"
+        enabled: true
+        state: started
+      when:
+        - action == 'verify_install'
+        - inventory_hostname in groups['httpd_hosts']
+        - pkg.rc != 0
+
+    - name: note other missing packages
+      debug:
+        msg: "{{ service_package }} not installed on {{ inventory_hostname }} (install task only covers httpd)"
+      when:
+        - action == 'verify_install'
+        - inventory_hostname not in groups['httpd_hosts']
+        - pkg.rc != 0
+
+    - name: show service state
+      command: systemctl is-active {{ systemd_unit }}
+      register: svc
+      changed_when: false
+      failed_when: false
+      when: action == 'verify_install'
+
+    - name: verify_install summary
+      debug:
+        msg: "{{ service_name }} on {{ inventory_hostname }}: pkg={{ 'ok' if pkg.rc == 0 else 'missing' }}, running={{ svc.stdout | default('n/a') }}"
+      when: action == 'verify_install'
+
+    - name: reset disk alert list
+      set_fact:
+        disk_alerts: []
+      when: action == 'check-disk'
+
+    - name: find mounts over threshold
+      set_fact:
+        disk_alerts: "{{ disk_alerts + [alert] }}"
+      vars:
+        used_pct: "{{ (((item.size_total - item.size_available) / item.size_total * 100) | round(1)) }}"
+        alert:
+          mount: "{{ item.mount }}"
+          used_pct: "{{ used_pct }}"
+      when:
+        - action == 'check-disk'
+        - item.size_total > 0
+        - used_pct | float > disk_usage_threshold | float
+      loop: "{{ ansible_mounts }}"
+      loop_control:
+        label: "{{ item.mount }}"
+
+    - name: print disk warnings
+      debug:
+        msg: "{{ inventory_hostname }} {{ item.mount }} at {{ item.used_pct }}%"
+      loop: "{{ disk_alerts | default([]) }}"
+      when:
+        - action == 'check-disk'
+        - disk_alerts | length > 0
+
+    - name: email disk alert
+      mail:
+        host: localhost
+        port: 25
+        to: "{{ alert_email }}"
+        subject: "disk alert: {{ inventory_hostname }}"
+        body: |
+          Filesystems over {{ disk_usage_threshold }}% on {{ inventory_hostname }}:
+          {% for a in disk_alerts %}
+          - {{ a.mount }}: {{ a.used_pct }}%
+          {% endfor %}
+      when:
+        - action == 'check-disk'
+        - disk_alerts | length > 0
+
+    - name: call healthcheck API
+      uri:
+        url: "{{ healthcheck_api_url }}"
+        method: GET
+        return_content: yes
+      register: hc
+      run_once: true
+      delegate_to: localhost
+      become: false
+      when: action == 'check-status'
+
+    - name: show rbcapp1 status
+      debug:
+        msg: "rbcapp1={{ hc.json.application_status }}, down={{ hc.json.down_services | join(', ') if hc.json.down_services else 'none' }}"
+      run_once: true
+      when: action == 'check-status'

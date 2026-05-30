@@ -203,6 +203,11 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Generated monitoring status files
+test1/status-output/
+
+.DS_Store
+
 # Ruff stuff:
 .ruff_cache/
 
